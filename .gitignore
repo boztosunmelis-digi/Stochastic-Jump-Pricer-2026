@@ -1,7 +1,25 @@
+# Security: Sensitive Environment Variables
 .env
-__pycache__/
-*.pyc
-.vscode/
+
+# Data: Proprietary price feeds and stochastic process logs
+*.csv
+*.xlsx
+*.json
+data/
+
+# Infrastructure: Local MacBook folder structures and dependencies
+venv/
+env/
+ENV/
+bin/
+lib/
+include/
+
+# Metadata: OS and Python footprints
 .DS_Store
-dist/
-build/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE: Local settings
+.vscode/
