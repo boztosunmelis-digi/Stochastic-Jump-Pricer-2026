@@ -1,0 +1,21 @@
+name: Security Scan
+on: [push, pull_request]
+
+jobs:
+  bandit-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install Security Tools
+        run: pip install bandit
+
+      - name: Run Bandit Scan
+        # Scans your engine, dashboard, and calibration for vulnerabilities
+        run: bandit -r . -x ./venv
