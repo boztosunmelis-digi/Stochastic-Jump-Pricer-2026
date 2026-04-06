@@ -1,3 +1,9 @@
+![Status](https://img.shields.io/badge/status-complete-success)
+![Python](https://img.shields.io/badge/python-3.14-blue)
+![Math](https://img.shields.io/badge/model-Bates%20(1996)-orange)
+![License](https://img.shields.io/badge/license-MIT-green)
+![Security](https://img.shields.io/badge/security-Bandit%20Scanned-yellow)
+
 # Stochastic-Jump-Pricer-2026: Bates Model Core
 
 A full-stack financial simulation implementing the **Bates (1996) Model**, which captures asset dynamics for the **Q1 2026 - Q4 2027** window by combining **Heston Stochastic Volatility** with **Merton's Jump-Diffusion** [6, 16].
@@ -22,7 +28,7 @@ $$dv_{t} = \kappa(\theta - v_{t})dt + \sigma\sqrt{v_{t}}dW_{t}^{2}$$
 * **$\theta$**: Long-run average volatility [94].
 
 ### 2. Merton Jump Component ($J$)
-Adds mass to the distribution tails to account for fatter tails than the standard Black-Scholes model [44, 95]:
+Adds mass to the distribution tails to account for "fat tails" that deviate from the standard Black-Scholes model [44, 95]:
 
 $$dS_{t} = (r - \lambda k)S_{t}dt + \sqrt{v_{t}}S_{t}dW_{t}^{1} + dZ_{t}$$
 
@@ -30,10 +36,15 @@ $$dS_{t} = (r - \lambda k)S_{t}dt + \sqrt{v_{t}}S_{t}dW_{t}^{1} + dZ_{t}$$
 * **$Z_t$**: Compound Poisson process with log-normal jump sizes [53].
 
 ## Technical Stack & Security
-* **Backend**: Python (NumPy, SciPy) implementing the Euler-Maruyama discretization.
-* **Frontend**: Streamlit & Plotly for interactive 3D Volatility Surface visualization.
+* **Backend**: Python (NumPy, SciPy) implementing the Euler–Maruyama discretisation.
+* **Frontend**: Streamlit & Plotly for interactive 3D Volatility Surface visualisation.
 * **Security**: Strict `.env` parameter isolation to prevent hardcoding of sensitive market data.
 * **Infrastructure**: Automated GitHub Actions for continuous security linting.
 
+## Security Posture
+> **Note**: This repository utilises automated dependency monitoring and Bandit-based security linting. All model parameters are isolated in a non-tracked environment to ensure the integrity of the 2026–2027 simulation data.
+
 ---
 *Reference: Fadugba, S. E. & Okunlola, J. T. (2014). On the Combination of Merton and Heston Models in the Theory of Option Pricing. International Journal of Applied Science and Mathematics.* [3, 5, 52]
+
+![Status](https://img.shields.io/badge/status-complete-success) ![License](https://img.shields.io/badge/license-MIT-green)
