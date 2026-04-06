@@ -11,15 +11,31 @@ class BatesCalibrator:
     def __init__(self, symbol="SPY", expiry="2026-12-18"):
         self.symbol = symbol
         self.expiry = expiry
+        self.r = 0.05
 
-        # Pull real 2026 market data
-        tk = yf.Ticker(symbol)
-        chain = tk.option_chain(expiry)
+        try:
+            # Attempt to pull real 2026 market data
+            tk = yf.Ticker(symbol)
+            chain = tk.option_chain(expiry)
 
-        # We take a slice of strikes to keep the optimisation snappy
-        self.strikes = chain.calls['strike'].values[10:30]
-        self.market_prices = chain.calls['lastPrice'].values[10:30]
-        self.s0 = tk.fast_info['lastPrice']
+            # Success: Use real market data
+            self.strikes = chain.calls['strike'].values[10:30]
+            self.market_prices = chain.calls['lastPrice'].values[10:30]
+            self.s0 = tk.fast_info['lastPrice']
+            print(f"Successfully fetched live data for {symbol}")
+
+        except Exception as e:  # pylint: disable=broad-except
+            # Fallback: Yahoo is rate-limiting us or the IP is blocked
+            print(
+                f"Rate Limit/Data Error: {e}. "
+                "Switching to Synthetic 2026 Smile."
+            )
+            self.s0 = 100.0
+            self.strikes = np.linspace(80, 120, 20)
+            self.market_prices = [
+                max(self.s0 - k, 0) + (100 - k)**2 / 400 + 1.5
+                for k in self.strikes
+            ]
 
     def bates_char_func(self, u, t_years, params):
         """Bates (1996) Characteristic Function."""
