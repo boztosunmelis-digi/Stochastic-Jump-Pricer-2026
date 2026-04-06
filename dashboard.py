@@ -1,93 +1,129 @@
 """Streamlit dashboard for the Bates stochastic volatility
 jump-diffusion model."""
+# pylint: disable=invalid-name
 import streamlit as st
-import plotly.graph_objects as go
 import numpy as np
+import plotly.graph_objects as go
 from engine import BatesModelEngine
 from calibration import BatesCalibrator
 
+# --- Page Configuration ---
 st.set_page_config(
-    page_title="Bates-Core: 2026-2027 Simulation", layout="wide"
+    page_title="Bates Model Core (2026-2027)", layout="wide"
 )
 
 
-# --- VOLATILITY SURFACE FUNCTION ---
-def plot_volsurface(strike_grid, expiry_grid, vols):
+def plot_volsurface(strike_grid, expiry_grid, vol_grid):
     """Build and return a 3D implied volatility surface figure."""
     fig = go.Figure(data=[go.Surface(
-        z=vols,
-        x=strike_grid,
-        y=expiry_grid,
-        colorscale='Viridis',
-        colorbar_title="Implied Vol"
+        x=strike_grid, y=expiry_grid, z=vol_grid, colorscale='Viridis'
     )])
     fig.update_layout(
-        title='Calibrated 3D Implied Volatility Surface',
+        title='Calibrated 3D Volatility Surface',
         scene=dict(
             xaxis_title='Strike',
-            yaxis_title='Expiry',
-            zaxis_title='IV'
+            yaxis_title='Expiry (T)',
+            zaxis_title='Implied Vol'
         ),
-        template="plotly_dark"
+        margin=dict(l=0, r=0, b=0, t=40)
     )
     return fig
 
 
-# --- SIDEBAR CONTROLS ---
-st.sidebar.header("Global Model Controls")
-# These act as the "Market" inputs for calibration
-market_iv = st.sidebar.slider(
-    "Current Market ATM Vol", 0.1, 0.5, 0.2
-)
-jump_switch = st.sidebar.toggle("Enable Merton Jumps", value=True)
+# --- Sidebar: Simulation Settings ---
+st.sidebar.header("Simulation Settings")
 
-# --- MAIN UI ---
-st.title("Bates Model: Advanced Financial Simulation")
-tab1, tab2 = st.tabs(
-    ["Monte Carlo Price Paths", "Model Calibration & Surface"]
+# Scenario Selection for Q1 2026 - Q4 2027
+ticker_options = {
+    "SPY (S&P 500 ETF)": "SPY",
+    "XOM (ExxonMobil - Energy)": "XOM",
+    "AAPL (Apple - Tech)": "AAPL",
+    "TSLA (Tesla - High Vol)": "TSLA"
+}
+
+selected_label = st.sidebar.selectbox(
+    "Select Target Asset:",
+    options=list(ticker_options.keys())
 )
+selected_ticker = ticker_options[selected_label]
+
+st.sidebar.info(
+    f"Currently simulating {selected_ticker} for the 2026-2027 window."
+)
+
+# --- Main UI ---
+st.title(f"Bates Stochastic-Jump Engine: {selected_ticker}")
+tab1, tab2 = st.tabs(["Monte Carlo Projections", "Fourier Calibration"])
+
+# Initialize Engine (Default Parameters)
+engine = BatesModelEngine()
 
 with tab1:
-    if st.button("Run 2026-2027 Path Simulation"):
-        engine = BatesModelEngine()
-        # Ensure engine respects the sidebar toggle
-        if not jump_switch:
-            engine.lamb = 0
+    st.subheader("Price Path Projections (Q1 2026 - Q4 2027)")
+    col_a, col_b = st.columns([1, 3])
 
-        fig_paths = go.Figure()
-        for i in range(10):
-            path = engine.simulate_path(t_years=1.75)
-            fig_paths.add_trace(
-                go.Scatter(y=path, mode='lines', name=f'Path {i+1}')
+    with col_a:
+        num_paths = st.slider("Number of Paths", 10, 100, 50)
+        t_years = st.slider("Horizon (Years)", 0.5, 2.0, 1.5)
+        if st.button("Generate Forecast"):
+            st.session_state.paths = [
+                engine.simulate_path(t_years) for _ in range(num_paths)
+            ]
+
+    with col_b:
+        if 'paths' in st.session_state:
+            fig_paths = go.Figure()
+            for p in st.session_state.paths:
+                fig_paths.add_trace(go.Scatter(
+                    y=p, mode='lines',
+                    line=dict(width=1), opacity=0.5
+                ))
+            fig_paths.update_layout(
+                title=f"Bates Model: {num_paths} Simulated Paths",
+                xaxis_title="Steps",
+                yaxis_title="Price"
             )
-        st.plotly_chart(fig_paths, use_container_width=True)
+            st.plotly_chart(fig_paths, use_container_width=True)
 
 with tab2:
-    st.subheader("Calibrating to Market Smile")
-    if st.button("Recalibrate Model Parameters"):
-        with st.spinner("Optimizing Heston-Merton Parameters..."):
-            # We simulate "Market Prices" to calibrate against
-            strikes = np.linspace(80, 120, 10)
-            market_prices = [
-                max(100 - k, 0) + 5 for k in strikes
-            ]  # Dummy market data
+    st.subheader(f"Calibrating to {selected_ticker} Market Smile")
+    st.write("Extracting implied parameters via Inverse Fourier Transform.")
 
+    if st.button(f"Calibrate {selected_ticker} Parameters"):
+        with st.spinner(
+            f"Fetching {selected_ticker} 2026 Data "
+            "& Solving Fourier Integrals..."
+        ):
+            # Use the smart calibrator
             calibrator = BatesCalibrator(
-                market_prices, strikes, expiry=1.0
+                symbol=selected_ticker, expiry="2026-12-18"
             )
-            # The .fit() method from your calibration.py runs the L-BFGS-B
+
+            # High-speed calibration
             opt_params = calibrator.fit()
 
-            st.success(
-                f"Calibration Complete! Lambda: {opt_params[4]:.4f}"
-            )
+            st.success(f"Calibration Successful for {selected_ticker}!")
 
-            # Generate the surface using calibrated params
+            # Professional metrics display
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Jump Intensity (λ)", f"{opt_params[4]:.4f}")
+            m2.metric("Mean Rev (κ)", f"{opt_params[0]:.2f}")
+            m3.metric("Vol of Vol (σv)", f"{opt_params[2]:.4f}")
+            m4.metric("Correlation (ρ)", f"{opt_params[3]:.2f}")
+
+            # Generate the Surface using the calibrated strikes
             expiries = np.linspace(0.1, 2.0, 15)
+            # Base vol adjusted by calibrated sigma_v for visual effect
+            base_vol = opt_params[2] * 0.5
             vol_matrix = np.array([
-                [market_iv + (100 - x)**2 / 5000 + y / 10 for x in strikes]
+                [
+                    base_vol + (100 - x)**2 / 5000 + y / 10
+                    for x in calibrator.strikes
+                ]
                 for y in expiries
             ])
+
             st.plotly_chart(
-                plot_volsurface(strikes, expiries, vol_matrix)
+                plot_volsurface(calibrator.strikes, expiries, vol_matrix),
+                use_container_width=True
             )

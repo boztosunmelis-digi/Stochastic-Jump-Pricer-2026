@@ -50,7 +50,7 @@ class BatesModelEngine:
         # Expected jump size correction (k_bar)
         k_bar = np.exp(self.mu_j + 0.5 * self.delta_j**2) - 1
 
-        # Initialize paths
+        # Initialise paths
         prices = np.zeros(steps + 1)
         variance = np.zeros(steps + 1)
         prices[0] = self.s0
