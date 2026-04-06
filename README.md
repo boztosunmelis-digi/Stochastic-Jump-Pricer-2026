@@ -6,17 +6,16 @@
 
 # Stochastic-Jump-Pricer-2026: Bates Model Core
 
-**Live Dashboard**: [View 2026-2027 Interactive Simulation]
-https://stochastic-jump-pricer-2026-7xksu8bhonxziqjrvgwbas.streamlit.app/
+**Live Dashboard**: [View 2026-2027 Interactive Simulation](https://stochastic-jump-pricer-2026-7xksu8bhonxziqjrvgwbas.streamlit.app/)
 
 ## Introduction
 A full-stack financial engineering suite implementing the **Bates (1996) Model**. This project captures complex asset dynamics for the volatility window between **Q1 of 2026 and Q4 of 2027** by integrating **Heston Stochastic Volatility** with **Merton's Jump-Diffusion** via high-speed Fourier Inversion.
 
-## Overview
-This engine simulates and prices assets by capturing two critical features of financial returns:
+## Methodology: The Dual-Engine Approach
+To achieve institutional-grade performance, the engine bifurcates the pricing and simulation tasks:
 
-1. **Mean-Reverting Volatility**: Utilising the Heston model to ensure volatility evolves in a stochastic, mean-reverting fashion.
-2. **Discontinuous Jumps**: Implementing Merton’s jump model to account for sudden outliers and "fat tails" driven by public information shocks.
+* **Calibration via Fourier Inversion**: We utilise **Numerical Quadrature Integration** of the characteristic function for model calibration. Unlike Monte Carlo, this semi-analytical approach provides near-instantaneous pricing, allowing the **L-BFGS-B optimiser** to converge on market parameters ($\kappa, \sigma_v, \rho$) in milliseconds rather than minutes.
+* **Projection via Monte Carlo**: While Fourier methods are superior for pricing, they do not reveal the "path-dependency" of the asset. We maintain a **Monte Carlo engine** for the 2026-2027 projections to visualise the **discontinuous jumps** and **stochastic volatility clustering** that characterise real-world market shocks.
 
 ## Mathematical Architecture ($D + J$)
 The Bates model evaluates European option prices by treating the characteristic function ($\phi$) as a product of diffusion and jump components:
@@ -24,16 +23,16 @@ The Bates model evaluates European option prices by treating the characteristic 
 $$\phi_{X_{t}}^{Bates}(z) = \phi_{X_{t}}^{Heston}(z) \times \exp\left(t\lambda\left(\exp\left(-\frac{\delta^{2}z^{2}}{2} + i\mu z\right) - 1\right)\right)$$
 
 ### 1. High-Speed Calibration (Fourier Inversion)
-Unlike traditional Monte Carlo methods, this engine utilises **Numerical Quadrature Integration** of the characteristic function. This allows for near-instantaneous calibration of parameters ($\kappa, \theta, \sigma_v, \rho, \lambda$) against live market smiles.
+This engine utilise **Numerical Quadrature Integration** of the characteristic function. This allows for near-instantaneous calibration of parameters ($\kappa, \theta, \sigma_v, \rho, \lambda$) against live market smiles.
 
 ### 2. Live Market Integration
-The system fetches real-time 2026-2027 option chains via the **yfinance API**, allowing users to observe the calibrated "Volatility Smirk" for assets including **SPY, AAPL, TSLA, and XOM**.
+The system fetches real-time 2026–2027 option chains via the **yfinance API**, allowing users to observe the calibrated "Volatility Smirk" for assets including **SPY, AAPL, TSLA, and XOM**.
 
 ## Technical Stack
-* **Engine**: Python (NumPy, SciPy) using **Inverse Fourier Transforms** for pricing and **Euler-Maruyama** for path projection.
-* **Data**: `yfinance` API for live 2026 market data retrieval.
+* **Engine**: Python (NumPy, SciPy) utilising **Inverse Fourier Transforms** for precise pricing and **Euler-Maruyama discretisation** for path-dependent simulations.
+* **Data**: `yfinance` API for real-time 2026–2027 option chain retrieval and market smile extraction.
 * **Frontend**: Streamlit & Plotly for interactive 3D Volatility Surface visualisation.
-* **Optimisation**: L-BFGS-B routine for multi-parameter model fitting.
+* **Optimisation**: High-speed **L-BFGS-B** routine for multi-parameter model fitting against live market data.
 
 ## Security Posture
 > **Note**: This repository utilises automated dependency monitoring and Bandit-based security linting. All model parameters are isolated in a non-tracked environment to ensure the integrity of the 2026-2027 simulation data.
