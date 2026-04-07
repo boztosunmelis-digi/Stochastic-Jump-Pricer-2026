@@ -4,7 +4,6 @@ jump-diffusion model."""
 import streamlit as st
 import numpy as np
 import plotly.graph_objects as go
-import yfinance as yf
 from engine import BatesModelEngine
 from calibration import BatesCalibrator
 
@@ -13,15 +12,14 @@ from calibration import BatesCalibrator
 @st.cache_data(ttl=3600)
 def fetch_market_data(ticker, expiry):
     """Fetch and extract raw data to ensure serializability for caching."""
-    import yfinance as yf
     tk = yf.Ticker(ticker)
-    
+
     # Extract the underlying dataframes immediately
     chain = tk.option_chain(expiry)
     calls = chain.calls
     puts = chain.puts
     spot = tk.fast_info['lastPrice']
-    
+
     # Return raw data (DataFrames and floats) which Streamlit CAN serialize
     return (calls, puts), spot
 
@@ -44,7 +42,7 @@ def plot_volsurface(strike_grid, expiry_grid, vol_grid):
             'yaxis_title': 'Expiry (T)',
             'zaxis_title': 'Implied Vol',
             # Standardised range: 10% to 90% IV covers 99% of market regimes
-            'zaxis': {'range': [0.1, 0.9]}
+            'zaxis': {'range': [0.0, 0.6]}
         },
         margin={'l': 0, 'r': 0, 'b': 0, 't': 40}
     )
