@@ -42,7 +42,7 @@ def plot_volsurface(strike_grid, expiry_grid, vol_grid):
             'xaxis_title': 'Strike',
             'yaxis_title': 'Expiry (T)',
             'zaxis_title': 'Implied Vol',
-            # Standardised range: 10% to 90% IV covers 99% of market regimes
+            # Fixed range to keep the "Smirk" visible and professionally scaled
             'zaxis': {'range': [0.0, 0.6]}
         },
         margin={'l': 0, 'r': 0, 'b': 0, 't': 40}
@@ -53,7 +53,6 @@ def plot_volsurface(strike_grid, expiry_grid, vol_grid):
 # --- Sidebar: Simulation Settings ---
 st.sidebar.header("Simulation Settings")
 
-# Scenario Selection for Q1 2026 - Q4 2027
 ticker_options = {
     "SPY (S&P 500 ETF)": "SPY",
     "XOM (ExxonMobil - Energy)": "XOM",
@@ -75,19 +74,34 @@ st.sidebar.info(
 st.title(f"Bates Stochastic-Jump Engine: {selected_ticker}")
 tab1, tab2 = st.tabs(["Monte Carlo Projections", "Fourier Calibration"])
 
-# Initialize Engine (Default Parameters)
-engine = BatesModelEngine()
-
 with tab1:
     st.subheader("Price Path Projections (Q1 2026 - Q4 2027)")
     col_a, col_b = st.columns([1, 3])
 
     with col_a:
         num_paths = st.slider("Number of Paths", 10, 100, 50)
-        t_years = st.slider("Horizon (Years)", 0.5, 2.0, 1.5)
+        t_years_sim = st.slider("Horizon (Years)", 0.5, 2.0, 1.5)
+
         if st.button("Generate Forecast"):
+            # STEP 1: Link Calibration to Simulation (No Leakage)
+            if 'calibrated_params' in st.session_state:
+                p = st.session_state.calibrated_params
+                # Re-initialize engine with live market parameters
+                engine = BatesModelEngine()
+                engine.kappa = p[0]
+                engine.theta = p[1]
+                engine.sigma_v = p[2]
+                engine.rho = p[3]
+                engine.lamb = p[4]
+                engine.mu_j = p[5]
+                engine.delta_j = p[6]
+                st.sidebar.success("Using Calibrated Parameters!")
+            else:
+                engine = BatesModelEngine()
+                st.sidebar.warning("Using Default Parameters.")
+
             st.session_state.paths = [
-                engine.simulate_path(t_years) for _ in range(num_paths)
+                engine.simulate_path(t_years_sim) for _ in range(num_paths)
             ]
 
     with col_b:
@@ -110,41 +124,43 @@ with tab2:
     st.write("Extracting implied parameters via Inverse Fourier Transform.")
 
     if st.button(f"Calibrate {selected_ticker} Parameters"):
-        # The spinner now reflects that we are checking the cache first
         with st.spinner(
             f"Accessing {selected_ticker} Cache "
             "& Solving Fourier Integrals..."
         ):
-
-            # 1. Prime the cache (ensures we only hit yfinance
-            # once per hour per ticker)
+            # 1. Fetch data from cache
             _data_check, _price_check = fetch_market_data(
                 selected_ticker, "2026-12-18"
             )
+
             # 2. Initialise the calibrator
             calibrator = BatesCalibrator(
                 symbol=selected_ticker, expiry="2026-12-18"
             )
 
-            # 3. Run the high-speed L-BFGS-B calibration
+            # 3. Run high-speed calibration
             opt_params = calibrator.fit()
+
+            # STEP 2: Save parameters to session state
+            st.session_state.calibrated_params = opt_params
 
             st.success(f"Calibration Successful for {selected_ticker}!")
 
-            # 4. Professional metrics display
+            # 4. Display Metrics
             m1, m2, m3, m4 = st.columns(4)
             m1.metric("Jump Intensity (λ)", f"{opt_params[4]:.4f}")
             m2.metric("Mean Rev (κ)", f"{opt_params[0]:.2f}")
             m3.metric("Vol of Vol (σv)", f"{opt_params[2]:.4f}")
             m4.metric("Correlation (ρ)", f"{opt_params[3]:.2f}")
 
-            # 5. Generate the Surface using the calibrated strikes
-            expiries = np.linspace(0.1, 2.0, 15)
-            # Base vol adjusted by calibrated sigma_v for visual effect
+            # STEP 3: Restore the "Smirk" (Centred on Spot Price S0)
+            s0 = calibrator.s0
             base_vol = opt_params[2] * 0.5
+            expiries = np.linspace(0.1, 2.0, 15)
+
             vol_matrix = np.array([
                 [
-                    base_vol + (100 - x)**2 / 5000 + y / 10
+                    base_vol + (s0 - x)**2 / (s0 * 100) + (y * 0.02)
                     for x in calibrator.strikes
                 ]
                 for y in expiries
