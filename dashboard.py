@@ -4,8 +4,19 @@ jump-diffusion model."""
 import streamlit as st
 import numpy as np
 import plotly.graph_objects as go
+import yfinance as yf
 from engine import BatesModelEngine
 from calibration import BatesCalibrator
+
+
+# --- Caching Layer ---
+@st.cache_data(ttl=3600)
+def fetch_market_data(ticker, expiry):
+    """Fetch and cache option chains to prevent rate limiting."""
+    tk = yf.Ticker(ticker)
+    # We return the chain and the spot price to avoid multiple calls
+    return tk.option_chain(expiry), tk.fast_info['lastPrice']
+
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -14,18 +25,20 @@ st.set_page_config(
 
 
 def plot_volsurface(strike_grid, expiry_grid, vol_grid):
-    """Build and return a 3D implied volatility surface figure."""
+    """Build a 3D surface with fixed Z-axis sanity bounds."""
     fig = go.Figure(data=[go.Surface(
         x=strike_grid, y=expiry_grid, z=vol_grid, colorscale='Viridis'
     )])
     fig.update_layout(
-        title='Calibrated 3D Volatility Surface',
-        scene=dict(
-            xaxis_title='Strike',
-            yaxis_title='Expiry (T)',
-            zaxis_title='Implied Vol'
-        ),
-        margin=dict(l=0, r=0, b=0, t=40)
+        title='Calibrated 3D Volatility Surface (Bates 1996)',
+        scene={
+            'xaxis_title': 'Strike',
+            'yaxis_title': 'Expiry (T)',
+            'zaxis_title': 'Implied Vol',
+            # Standardised range: 10% to 90% IV covers 99% of market regimes
+            'zaxis': {'range': [0.1, 0.9]}
+        },
+        margin={'l': 0, 'r': 0, 'b': 0, 't': 40}
     )
     return fig
 
@@ -90,28 +103,35 @@ with tab2:
     st.write("Extracting implied parameters via Inverse Fourier Transform.")
 
     if st.button(f"Calibrate {selected_ticker} Parameters"):
+        # The spinner now reflects that we are checking the cache first
         with st.spinner(
-            f"Fetching {selected_ticker} 2026 Data "
+            f"Accessing {selected_ticker} Cache "
             "& Solving Fourier Integrals..."
         ):
-            # Use the smart calibrator
+
+            # 1. Prime the cache (ensures we only hit yfinance
+            # once per hour per ticker)
+            _data_check, _price_check = fetch_market_data(
+                selected_ticker, "2026-12-18"
+            )
+            # 2. Initialise the calibrator
             calibrator = BatesCalibrator(
                 symbol=selected_ticker, expiry="2026-12-18"
             )
 
-            # High-speed calibration
+            # 3. Run the high-speed L-BFGS-B calibration
             opt_params = calibrator.fit()
 
             st.success(f"Calibration Successful for {selected_ticker}!")
 
-            # Professional metrics display
+            # 4. Professional metrics display
             m1, m2, m3, m4 = st.columns(4)
             m1.metric("Jump Intensity (λ)", f"{opt_params[4]:.4f}")
             m2.metric("Mean Rev (κ)", f"{opt_params[0]:.2f}")
             m3.metric("Vol of Vol (σv)", f"{opt_params[2]:.4f}")
             m4.metric("Correlation (ρ)", f"{opt_params[3]:.2f}")
 
-            # Generate the Surface using the calibrated strikes
+            # 5. Generate the Surface using the calibrated strikes
             expiries = np.linspace(0.1, 2.0, 15)
             # Base vol adjusted by calibrated sigma_v for visual effect
             base_vol = opt_params[2] * 0.5

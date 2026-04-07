@@ -3,7 +3,7 @@ jump-diffusion model."""
 import numpy as np
 import yfinance as yf
 from scipy.integrate import quad
-from scipy.optimize import minimize
+from scipy.optimize import minimize, differential_evolution
 
 
 class BatesCalibrator:
@@ -103,25 +103,31 @@ class BatesCalibrator:
         return np.mean(errors)
 
     def fit(self):
-        """Run L-BFGS-B optimisation with tighter physical bounds."""
-        # New Initial Guess: Start with a strong negative correlation (-0.7)
-        # [kappa, theta, sig_v, rho, lamb, mu_j, del_j]
-        init_guess = [1.5, 0.05, 0.4, -0.7, 0.1, -0.1, 0.1]
-
-        # Refined Bounds: Prevent kappa from exploding and rho from idling at 0
+        """Dual-pass calibration: Global search followed by
+        local refinement."""
+        # Standardised 2026-2027 Equity Bounds
         bounds = [
-            (0.1, 4.0),    # kappa: Mean reversion speed
-            (0.01, 0.3),   # theta: Long-run vol
-            (0.1, 0.8),    # sig_v: Vol of vol
-            (-0.99, -0.1),  # rho: FORCE negative correlation for equities
-            (0.0, 0.8),    # lamb: Jump intensity
-            (-0.4, 0.0),   # mu_j: Mean jump size
-            (0.01, 0.4)    # del_j: Jump vol
+            (0.1, 4.0),    # kappa
+            (0.01, 0.3),   # theta
+            (0.1, 0.8),    # sig_v
+            (-0.99, -0.1),  # rho (Forced negative for SPY/AAPL)
+            (0.0, 0.8),    # lamb
+            (-0.4, 0.0),   # mu_j
+            (0.01, 0.4)    # del_j
         ]
 
+        # Pass 1: Global "Scout" (Prevents getting stuck at 0.00 correlation)
+        global_res = differential_evolution(
+            self.objective_function,
+            bounds,
+            popsize=5,  # Efficiency over brute force
+            tol=0.1
+        )
+
+        # Pass 2: Local "Sniper" (Refines the result for high precision)
         res = minimize(
             self.objective_function,
-            init_guess,
+            global_res.x,
             bounds=bounds,
             method='L-BFGS-B',
             options={'ftol': 1e-6}  # Increase precision
