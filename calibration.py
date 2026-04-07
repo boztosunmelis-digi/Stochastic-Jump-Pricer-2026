@@ -103,20 +103,27 @@ class BatesCalibrator:
         return np.mean(errors)
 
     def fit(self):
-        """Run L-BFGS-B optimisation with physical bounds."""
-        # Initial guess: [kappa, theta, sig_v, rho, lamb, mu_j, del_j]
-        init_guess = [2.0, 0.04, 0.3, -0.7, 0.1, -0.05, 0.1]
+        """Run L-BFGS-B optimisation with tighter physical bounds."""
+        # New Initial Guess: Start with a strong negative correlation (-0.7)
+        # [kappa, theta, sig_v, rho, lamb, mu_j, del_j]
+        init_guess = [1.5, 0.05, 0.4, -0.7, 0.1, -0.1, 0.1]
 
-        # Bounds ensure the model stays mathematically sound
+        # Refined Bounds: Prevent kappa from exploding and rho from idling at 0
         bounds = [
-            (0.1, 5.0), (0.01, 0.2), (0.1, 1.0),
-            (-0.95, 0.0), (0.0, 1.0), (-0.5, 0.0), (0.01, 0.5)
+            (0.1, 4.0),    # kappa: Mean reversion speed
+            (0.01, 0.3),   # theta: Long-run vol
+            (0.1, 0.8),    # sig_v: Vol of vol
+            (-0.99, -0.1),  # rho: FORCE negative correlation for equities
+            (0.0, 0.8),    # lamb: Jump intensity
+            (-0.4, 0.0),   # mu_j: Mean jump size
+            (0.01, 0.4)    # del_j: Jump vol
         ]
 
         res = minimize(
             self.objective_function,
             init_guess,
             bounds=bounds,
-            method='L-BFGS-B'
+            method='L-BFGS-B',
+            options={'ftol': 1e-6}  # Increase precision
         )
         return res.x
