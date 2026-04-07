@@ -153,14 +153,24 @@ with tab2:
             m3.metric("Vol of Vol (σv)", f"{opt_params[2]:.4f}")
             m4.metric("Correlation (ρ)", f"{opt_params[3]:.2f}")
 
-            # STEP 3: Restore the "Smirk" (Centred on Spot Price S0)
+            # 5. Generate the Surface using the calibrated strikes
+            # STEP 3: Universal Normalised Smirk (Links Math to Visuals)
             s0 = calibrator.s0
-            base_vol = opt_params[2] * 0.5
+            # sig_v (Vol of Vol) drives the "depth" of the U-shape
+            sig_v = opt_params[2]
+            # rho (Correlation) drives the "tilt" or Skew of the surface
+            rho = opt_params[3]
+
             expiries = np.linspace(0.1, 2.0, 15)
 
+            # The "Total" Implied Volatility logic:
+            # Base + Curvature (Smile) + Skew (Tilt) + Time Decay
             vol_matrix = np.array([
                 [
-                    base_vol + (s0 - x)**2 / (s0 * 100) + (y * 0.02)
+                    (sig_v * 0.5)
+                    + (2.5 * ((x - s0)/s0)**2)  # "U" Smile
+                    - (rho * (x - s0)/s0)        # "Tilt" Smirk
+                    + (y * 0.05)                 # Term structure
                     for x in calibrator.strikes
                 ]
                 for y in expiries

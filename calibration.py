@@ -8,21 +8,42 @@ from scipy.optimize import minimize, differential_evolution
 
 class BatesCalibrator:
     """Calibrates the Bates model to real market option prices via IFT."""
-    def __init__(self, symbol="SPY", expiry="2026-12-18"):
+    def __init__(self, symbol, expiry="2026-12-18"):
         self.symbol = symbol
         self.expiry = expiry
         self.r = 0.05
 
         try:
-            # Attempt to pull real 2026 market data
             tk = yf.Ticker(symbol)
             chain = tk.option_chain(expiry)
-
-            # Success: Use real market data
-            self.strikes = chain.calls['strike'].values[10:30]
-            self.market_prices = chain.calls['lastPrice'].values[10:30]
             self.s0 = tk.fast_info['lastPrice']
-            print(f"Successfully fetched live data for {symbol}")
+
+            # 1. Grab all calls and filter for liquidity
+            calls = chain.calls[chain.calls['openInterest'] > 5]
+
+            # 2. DYNAMIC WINDOW: Grab strikes within +/- 15% of spot
+            # This is the "Gold Standard" for multi-asset calibration
+            mask = (
+                (calls['strike'] >= self.s0 * 0.85)
+                & (calls['strike'] <= self.s0 * 1.15)
+            )
+            filtered_calls = calls[mask]
+
+            # 3. Safety Fallback: If the 15% window is too thin,
+            # take the nearest 20 strikes
+            if len(filtered_calls) < 8:
+                idx = (np.abs(calls['strike'] - self.s0)).argmin()
+                filtered_calls = calls.iloc[
+                    max(0, idx-10):min(len(calls), idx+10)
+                ]
+
+            self.strikes = filtered_calls['strike'].values
+            self.market_prices = filtered_calls['lastPrice'].values
+
+            print(
+                f"Bates Engine: Calibrating {symbol} at "
+                f"${self.s0:.2f} using {len(self.strikes)} strikes."
+            )
 
         except Exception as e:  # pylint: disable=broad-except
             # Fallback: Yahoo is rate-limiting us or the IP is blocked
