@@ -12,10 +12,18 @@ from calibration import BatesCalibrator
 # --- Caching Layer ---
 @st.cache_data(ttl=3600)
 def fetch_market_data(ticker, expiry):
-    """Fetch and cache option chains to prevent rate limiting."""
+    """Fetch and extract raw data to ensure serializability for caching."""
+    import yfinance as yf
     tk = yf.Ticker(ticker)
-    # We return the chain and the spot price to avoid multiple calls
-    return tk.option_chain(expiry), tk.fast_info['lastPrice']
+    
+    # Extract the underlying dataframes immediately
+    chain = tk.option_chain(expiry)
+    calls = chain.calls
+    puts = chain.puts
+    spot = tk.fast_info['lastPrice']
+    
+    # Return raw data (DataFrames and floats) which Streamlit CAN serialize
+    return (calls, puts), spot
 
 
 # --- Page Configuration ---
