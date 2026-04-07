@@ -12,6 +12,7 @@ from calibration import BatesCalibrator
 @st.cache_data(ttl=3600)
 def fetch_market_data(ticker, expiry):
     """Fetch and extract raw data to ensure serializability for caching."""
+    import yfinance as yf  # pylint: disable=import-outside-toplevel
     tk = yf.Ticker(ticker)
 
     # Extract the underlying dataframes immediately
