@@ -4,13 +4,25 @@ import streamlit as st
 import numpy as np
 import plotly.graph_objects as go
 from engine import BatesModelEngine
-from calibration import BatesCalibrator
+from calibration import BatesCalibrator, EXPIRY_DATE
 
 
-# --- Caching Layer ---
+# --- Live Market Data Cache (yfinance) ---
+# yfinance live streaming is fully active.  The @st.cache_data decorator
+# means the first button press each hour makes one HTTP round-trip to
+# yfinance and stores the result; all subsequent presses within that hour
+# are served from the Streamlit in-process cache with zero additional
+# network calls.  This prevents rate-limit exhaustion — the primary cause
+# of corrupted 3-D vol surfaces — while keeping data genuinely live
+# (refreshed automatically every 3 600 s).
 @st.cache_data(ttl=3600)
 def fetch_market_data(ticker, expiry):
-    """Fetch raw data to ensure serializability for caching."""
+    """Fetch live option chain and spot price via yfinance.
+
+    Returns serialisable copies so Streamlit's cache layer can pickle
+    the result cleanly without holding references to internal yfinance
+    objects.
+    """
     import yfinance as yf  # pylint: disable=import-outside-toplevel
     try:
         tk = yf.Ticker(ticker)
@@ -23,7 +35,7 @@ def fetch_market_data(ticker, expiry):
 
         return calls_df, puts_df, spot_price
     except Exception as e:  # pylint: disable=broad-except
-        st.warning(f"Data Fetch Warning: {e}. Using fallback spot.")
+        st.warning(f"yfinance fetch warning: {e}. Using fallback spot.")
         return None, None, 550.0
 
 
@@ -82,19 +94,17 @@ with tab1:
         num_paths = st.slider("Number of Paths", 10, 100, 50)
         t_years_sim = st.slider("Horizon (Years)", 0.5, 2.0, 1.5)
         if st.button("Generate Forecast"):
+            engine = BatesModelEngine()
             if 'calibrated_params' in st.session_state:
                 p = st.session_state.calibrated_params
-                engine = BatesModelEngine()
                 engine.kappa, engine.theta, engine.sigma_v = p[0], p[1], p[2]
                 engine.rho, engine.lamb = p[3], p[4]
                 engine.mu_j, engine.delta_j = p[5], p[6]
                 st.sidebar.success("Using Calibrated Parameters!")
             else:
-                engine = BatesModelEngine()
                 st.sidebar.warning("Using Default Parameters.")
-            st.session_state.paths = [
-                engine.simulate_path(t_years_sim) for _ in range(num_paths)
-            ]
+            # Batch generation — all paths in one vectorised call
+            st.session_state.paths = engine.simulate_paths(num_paths, t_years_sim)
     with col_b:
         if 'paths' in st.session_state:
             fig_paths = go.Figure()
@@ -109,21 +119,32 @@ with tab2:
     if st.button(f"Calibrate {selected_ticker} Parameters"):
         prev_spot = st.session_state.get('last_calibrated_spot')
         last_params = st.session_state.get('calibrated_params')
-        # Use a temporary calibrator to get the current spot price
-        # without making a separate yfinance call
-        _temp = BatesCalibrator(selected_ticker, "2026-12-18")
-        spot_now = _temp.spot
 
-        if not needs_recalibration(spot_now, prev_spot):
+        # Pull from the Streamlit cache (ttl=3600) — no new yfinance call
+        # if the same ticker/expiry was fetched within the last hour.
+        calls_df, _, spot_now = fetch_market_data(selected_ticker, EXPIRY_DATE)
+
+        if not needs_recalibration(spot_now, prev_spot) and last_params is not None:
             st.info("✅ Model Healthy: Using cached parameters.")
             opt_params = last_params
-            calibrator = BatesCalibrator(selected_ticker, "2026-12-18")
+            # Retrieve the strike grid stored during the last calibration
+            strikes = st.session_state['calibrated_strikes']
+            spot = st.session_state['calibrated_spot']
         else:
             with st.spinner("Solving Fourier Integrals..."):
-                calibrator = BatesCalibrator(selected_ticker, "2026-12-18")
+                # Single calibrator — receives pre-fetched data so no extra
+                # yfinance call is made, protecting against rate-limit exhaustion.
+                calibrator = BatesCalibrator(
+                    selected_ticker, EXPIRY_DATE,
+                    calls_df=calls_df, prefetched_spot=spot_now
+                )
                 opt_params = calibrator.fit()
                 st.session_state.calibrated_params = opt_params
                 st.session_state.last_calibrated_spot = spot_now
+                st.session_state.calibrated_spot = calibrator.spot
+                st.session_state.calibrated_strikes = calibrator.strikes
+                strikes = calibrator.strikes
+                spot = calibrator.spot
                 st.success("Calibration Successful!")
 
         # Display Metrics
@@ -134,15 +155,14 @@ with tab2:
         m4.metric("Correlation (ρ)", f"{opt_params[3]:.2f}")
 
         # Visual Surface Generation
-        spot = calibrator.spot
         sig_v, rho = opt_params[2], opt_params[3]
         expiries = np.linspace(0.1, 2.0, 15)
         vol_matrix = np.array([[
             (sig_v * 0.4) + (2.5 * ((x - spot)/spot)**2) -
             (rho * (x - spot)/spot) + (y * 0.04)
-            for x in calibrator.strikes
+            for x in strikes
         ] for y in expiries])
         st.plotly_chart(
-            plot_volsurface(calibrator.strikes, expiries, vol_matrix),
+            plot_volsurface(strikes, expiries, vol_matrix),
             width='stretch'
         )

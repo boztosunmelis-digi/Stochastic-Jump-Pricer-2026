@@ -44,43 +44,105 @@ class BatesModelEngine:
 
     def simulate_path(self, t_years=1.75, steps=504):
         """
-        Monte Carlo Simulation for Q1 2026 - Q4 2027 (approx 1.75 years)
+        Single-path Monte Carlo Simulation for Q1 2026 - Q4 2027.
+        All random draws are pre-generated in bulk for performance.
         """
         dt = t_years / steps
         # Expected jump size correction (k_bar)
         k_bar = np.exp(self.mu_j + 0.5 * self.delta_j**2) - 1
 
-        # Initialise paths
+        # Pre-generate all random numbers at once (avoids per-step overhead)
+        z1 = np.random.standard_normal(steps)
+        z2 = (
+            self.rho * z1
+            + np.sqrt(1 - self.rho**2) * np.random.standard_normal(steps)
+        )
+        n_jumps_arr = np.random.poisson(self.lamb * dt, steps)
+
         prices = np.zeros(steps + 1)
         variance = np.zeros(steps + 1)
         prices[0] = self.s0
         variance[0] = self.theta  # Start at long-run mean
 
         for t in range(1, steps + 1):
-            # Correlated Brownian Motions
-            z1 = np.random.standard_normal()
-            z2 = (
-                self.rho * z1
-                + np.sqrt(1 - self.rho**2) * np.random.standard_normal()
-            )
-
             # Merton Jump Component
-            n_jumps = np.random.poisson(self.lamb * dt)
-            jumps = (
-                np.sum(np.random.normal(self.mu_j, self.delta_j, n_jumps))
-                if n_jumps > 0 else 0
+            nj = n_jumps_arr[t - 1]
+            jump = (
+                np.sum(np.random.normal(self.mu_j, self.delta_j, nj))
+                if nj > 0 else 0.0
             )
 
-            # Heston Variance Process (Reflected at zero for stability)
+            # Heston Variance Process (full-truncation for numerical stability)
+            v_prev = max(variance[t - 1], 0.0)
             variance[t] = np.maximum(
-                variance[t-1] + self.kappa * (self.theta - variance[t-1]) * dt
-                + self.sigma_v * np.sqrt(variance[t-1]) * np.sqrt(dt) * z2,
+                v_prev + self.kappa * (self.theta - v_prev) * dt
+                + self.sigma_v * np.sqrt(v_prev * dt) * z2[t - 1],
                 1e-6
             )
 
             # Bates Price Process
-            drift = (self.r - self.lamb * k_bar - 0.5 * variance[t-1]) * dt
-            diffusion = np.sqrt(variance[t-1] * dt) * z1
-            prices[t] = prices[t-1] * np.exp(drift + diffusion + jumps)
+            drift = (self.r - self.lamb * k_bar - 0.5 * v_prev) * dt
+            diffusion = np.sqrt(v_prev * dt) * z1[t - 1]
+            prices[t] = prices[t - 1] * np.exp(drift + diffusion + jump)
 
         return prices
+
+    def simulate_paths(self, n_paths=50, t_years=1.75, steps=504):
+        """
+        Batch Monte Carlo: generate n_paths simultaneously using vectorised
+        NumPy operations across the path dimension.
+
+        All random draws are pre-allocated as (steps, n_paths) arrays so that
+        each time-step update operates on the entire path ensemble at once,
+        replacing the outer Python loop over individual paths with a single
+        vectorised step.
+
+        Returns
+        -------
+        np.ndarray, shape (n_paths, steps + 1)
+        """
+        dt = t_years / steps
+        k_bar = np.exp(self.mu_j + 0.5 * self.delta_j**2) - 1
+
+        # Pre-generate all random draws: shape (steps, n_paths)
+        z1 = np.random.standard_normal((steps, n_paths))
+        z2 = (
+            self.rho * z1
+            + np.sqrt(1 - self.rho**2) * np.random.standard_normal((steps, n_paths))
+        )
+        # Poisson jump counts per (step, path)
+        n_jumps = np.random.poisson(self.lamb * dt, (steps, n_paths))
+
+        prices = np.zeros((steps + 1, n_paths))
+        variance = np.zeros((steps + 1, n_paths))
+        prices[0] = self.s0
+        variance[0] = self.theta
+
+        for t in range(1, steps + 1):
+            nj = n_jumps[t - 1]                  # (n_paths,)
+            v_prev = np.maximum(variance[t - 1], 0.0)
+
+            # Jump component: sum of nj i.i.d. Normal(mu_j, delta_j)
+            # = Normal(nj * mu_j, sqrt(nj) * delta_j) — exact result, not approx
+            jumps = np.zeros(n_paths)
+            jump_mask = nj > 0
+            if jump_mask.any():
+                nj_active = nj[jump_mask].astype(float)
+                jumps[jump_mask] = np.random.normal(
+                    self.mu_j * nj_active,
+                    self.delta_j * np.sqrt(nj_active)
+                )
+
+            # Heston Variance Process (vectorised across all paths)
+            variance[t] = np.maximum(
+                v_prev + self.kappa * (self.theta - v_prev) * dt
+                + self.sigma_v * np.sqrt(v_prev * dt) * z2[t - 1],
+                1e-6
+            )
+
+            # Bates Price Process (vectorised across all paths)
+            drift = (self.r - self.lamb * k_bar - 0.5 * v_prev) * dt
+            diffusion = np.sqrt(v_prev * dt) * z1[t - 1]
+            prices[t] = prices[t - 1] * np.exp(drift + diffusion + jumps)
+
+        return prices.T  # → (n_paths, steps + 1)

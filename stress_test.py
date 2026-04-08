@@ -6,18 +6,21 @@ from engine import BatesModelEngine
 
 def run_stress_test():
     """Run and plot standard vs crash stress test scenarios."""
-    engine = BatesModelEngine()
 
     # Scenario A: Standard Market (Low Jump Risk)
-    engine.lamb = 0.05
-    engine.mu_j = -0.02
-    path_standard = engine.simulate_path()
+    # Each scenario gets its own engine instance so parameter changes
+    # are isolated and do not leak between runs.
+    engine_a = BatesModelEngine()
+    engine_a.lamb = 0.05
+    engine_a.mu_j = -0.02
+    path_standard = engine_a.simulate_path()
 
     # Scenario B: 2026 "Market Crash" (High Jump Risk)
-    # We spike Lambda and set a deep negative Mu_j
-    engine.lamb = 5.0    # 5 jumps expected per year
-    engine.mu_j = -0.15  # -15% average jump size
-    path_crash = engine.simulate_path()
+    # Spike Lambda and set a deep negative Mu_j
+    engine_b = BatesModelEngine()
+    engine_b.lamb = 5.0    # 5 jumps expected per year
+    engine_b.mu_j = -0.15  # -15% average jump size
+    path_crash = engine_b.simulate_path()
 
     # Plotting the comparison
     plt.figure(figsize=(10, 6))
