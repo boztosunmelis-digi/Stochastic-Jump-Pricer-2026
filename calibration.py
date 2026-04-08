@@ -15,34 +15,30 @@ class BatesCalibrator:
 
         try:
             tk = yf.Ticker(symbol)
-            chain = tk.option_chain(expiry)
+            # Use fast_info to get s0 FIRST
             self.s0 = tk.fast_info['lastPrice']
 
-            # 1. Grab all calls and filter for liquidity
-            calls = chain.calls[chain.calls['openInterest'] > 5]
+            chain = tk.option_chain(expiry)
+            calls = chain.calls
 
-            # 2. DYNAMIC WINDOW: Grab strikes within +/- 15% of spot
-            # This is the "Gold Standard" for multi-asset calibration
-            mask = (
-                (calls['strike'] >= self.s0 * 0.85)
-                & (calls['strike'] <= self.s0 * 1.15)
+            # Find the strike closest to Spot
+            idx = (np.abs(calls['strike'] - self.s0)).argmin()
+
+            # FORCE a 10% window around the current price
+            # This prevents the 260-360 range if SPY is at 520
+            buffer = 15  # number of strikes to each side
+            start_idx = max(0, idx - buffer)
+            end_idx = min(len(calls), idx + buffer)
+
+            self.strikes = calls['strike'].values[start_idx:end_idx]
+            self.market_prices = (
+                calls['lastPrice'].values[start_idx:end_idx]
             )
-            filtered_calls = calls[mask]
 
-            # 3. Safety Fallback: If the 15% window is too thin,
-            # take the nearest 20 strikes
-            if len(filtered_calls) < 8:
-                idx = (np.abs(calls['strike'] - self.s0)).argmin()
-                filtered_calls = calls.iloc[
-                    max(0, idx-10):min(len(calls), idx+10)
-                ]
-
-            self.strikes = filtered_calls['strike'].values
-            self.market_prices = filtered_calls['lastPrice'].values
-
+            # Safety check: if strikes are still under 400 for SPY
             print(
-                f"Bates Engine: Calibrating {symbol} at "
-                f"${self.s0:.2f} using {len(self.strikes)} strikes."
+                f"Calibrating {symbol}: Spot {self.s0} "
+                f"| Range {self.strikes[0]}-{self.strikes[-1]}"
             )
 
         except Exception as e:  # pylint: disable=broad-except
