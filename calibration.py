@@ -1,5 +1,4 @@
-"""Calibration module for the Bates stochastic volatility
-jump-diffusion model."""
+"""Calibration module for the Bates model."""
 import numpy as np
 import yfinance as yf
 from scipy.integrate import quad
@@ -7,146 +6,100 @@ from scipy.optimize import minimize, differential_evolution
 
 
 class BatesCalibrator:
-    """Calibrates the Bates model to real market option prices via IFT."""
+    """Calibrates Bates model parameters via IFT."""
+
     def __init__(self, symbol, expiry="2026-12-18"):
         self.symbol = symbol
         self.expiry = expiry
         self.r = 0.05
-
+        self.spot = 550.0  # Default, overwritten by live data
+        self.strikes = np.linspace(500, 600, 20)
+        self.market_prices = np.linspace(60, 10, 20)
         try:
             tk = yf.Ticker(symbol)
-            # Use fast_info to get s0 FIRST
-            self.s0 = tk.fast_info['lastPrice']
-
+            self.spot = float(tk.fast_info['lastPrice'])
             chain = tk.option_chain(expiry)
             calls = chain.calls
 
-            # Find the strike closest to Spot
-            idx = (np.abs(calls['strike'] - self.s0)).argmin()
-
-            # FORCE a 10% window around the current price
-            # This prevents the 260-360 range if SPY is at 520
-            buffer = 15  # number of strikes to each side
+            # --- THE SMIRK FIX: CENTER STRIKES ON SPOT ---
+            idx = (np.abs(calls['strike'] - self.spot)).argmin()
+            buffer = 15
             start_idx = max(0, idx - buffer)
             end_idx = min(len(calls), idx + buffer)
 
             self.strikes = calls['strike'].values[start_idx:end_idx]
-            self.market_prices = (
-                calls['lastPrice'].values[start_idx:end_idx]
-            )
-
-            # Safety check: if strikes are still under 400 for SPY
-            print(
-                f"Calibrating {symbol}: Spot {self.s0} "
-                f"| Range {self.strikes[0]}-{self.strikes[-1]}"
-            )
-
-        except Exception as e:  # pylint: disable=broad-except
-            # Fallback: Yahoo is rate-limiting us or the IP is blocked
-            print(
-                f"Rate Limit/Data Error: {e}. "
-                "Switching to Synthetic 2026 Smile."
-            )
-            self.s0 = 100.0
-            self.strikes = np.linspace(80, 120, 20)
-            self.market_prices = [
-                max(self.s0 - k, 0) + (100 - k)**2 / 400 + 1.5
-                for k in self.strikes
-            ]
+            self.market_prices = calls['lastPrice'].values[start_idx:end_idx]
+            print(f"Bates Engine: {symbol} at ${self.spot:.2f}")
+        except (OSError, ValueError, KeyError):
+            self.spot = 550.0
+            self.strikes = np.linspace(500, 600, 20)
+            self.market_prices = np.linspace(60, 10, 20)
 
     def bates_char_func(self, u, t_years, params):
-        """Bates (1996) Characteristic Function."""
+        """Bates Characteristic Function."""
         kappa, theta, sig_v, rho, lamb, mu_j, del_j = params
-        r = 0.05
-
-        # Heston Component
+        r = self.r
         gamma = np.sqrt(
-            (kappa - 1j*rho*sig_v*u)**2
-            + (sig_v**2)*(u**2 + 1j*u)
+            (kappa - 1j*rho*sig_v*u)**2 + (sig_v**2)*(u**2 + 1j*u)
         )
         exp_gt = np.exp(gamma * t_years)
         ratio = (
-            (kappa - 1j*rho*sig_v*u - gamma)
-            / (kappa - 1j*rho*sig_v*u + gamma)
+            (kappa - 1j*rho*sig_v*u - gamma) /
+            (kappa - 1j*rho*sig_v*u + gamma)
         )
         d_num = kappa - 1j*rho*sig_v*u - gamma
         d_val = (
-            d_num / sig_v**2
-            * ((1 - exp_gt) / (1 - ratio * exp_gt))
+            d_num / sig_v**2 * ((1 - exp_gt) / (1 - ratio * exp_gt))
         )
         c_val = (
-            (kappa * theta) / (sig_v**2)
-            * (
-                d_num * t_years
-                - 2 * np.log((1 - ratio * exp_gt) / (1 - ratio))
-            )
+            (kappa * theta) / (sig_v**2) *
+            (d_num * t_years - 2 * np.log((1 - ratio * exp_gt) / (1 - ratio)))
         )
-
-        # Merton Jump Component
         jump = t_years * lamb * (
             np.exp(1j*u*mu_j - 0.5*del_j**2 * u**2) - 1
         )
-
         return np.exp(
-            c_val + d_val * theta + jump
-            + 1j*u*np.log(self.s0 * np.exp(r*t_years))
+            c_val + d_val * theta + jump + 1j*u *
+            np.log(self.spot * np.exp(r*t_years))
         )
 
     def _integrand(self, u, k_strike, t_years, params):
-        """Integrand for the inverse Fourier transform pricing."""
+        """Integrand for the inverse Fourier transform."""
+        cf_u = self.bates_char_func(u - 1j, t_years, params)
+        cf_den = self.bates_char_func(-1j, t_years, params)
         return np.real(
-            np.exp(-1j * u * np.log(k_strike))
-            * self.bates_char_func(u - 1j, t_years, params)
-            / (1j * u * self.bates_char_func(-1j, t_years, params))
+            np.exp(-1j * u * np.log(k_strike)) * cf_u / (1j * u * cf_den)
         )
 
     def price_option(self, k_strike, t_years, params):
-        """Semi-analytical pricing via Inverse Fourier Transform."""
-        # Integration from 0 to 100 is usually sufficient for convergence
-        integral, _ = quad(self._integrand, 0, 100,
-                           args=(k_strike, t_years, params))
-        return self.s0 - (np.sqrt(self.s0 * k_strike) / np.pi) * integral
+        """Analytical pricing via Fourier Transform."""
+        integral, _ = quad(
+            self._integrand, 0, 60, args=(k_strike, t_years, params)
+        )
+        return self.spot - (np.sqrt(self.spot * k_strike) / np.pi) * integral
 
     def objective_function(self, params):
-        """Compute MSE between market prices and Fourier-integrated prices."""
+        """MSE between market and model prices."""
         errors = []
-        t_years = 1.0  # Time to expiry in years
         for i, k_strike in enumerate(self.strikes):
             try:
-                model_price = self.price_option(k_strike, t_years, params)
-                errors.append((model_price - self.market_prices[i])**2)
-            except ValueError:  # Penalty for non-converging math
+                m_price = self.price_option(k_strike, 1.0, params)
+                errors.append((m_price - self.market_prices[i])**2)
+            except (ValueError, ZeroDivisionError):
                 errors.append(1e6)
         return np.mean(errors)
 
     def fit(self):
-        """Dual-pass calibration: Global search followed by
-        local refinement."""
-        # Standardised 2026-2027 Equity Bounds
+        """Dual-pass calibration logic."""
         bounds = [
-            (0.1, 4.0),    # kappa
-            (0.01, 0.3),   # theta
-            (0.1, 0.8),    # sig_v
-            (-0.99, -0.1),  # rho (Forced negative for SPY/AAPL)
-            (0.0, 0.8),    # lamb
-            (-0.4, 0.0),   # mu_j
-            (0.01, 0.4)    # del_j
+            (0.1, 4.0), (0.01, 0.3), (0.1, 0.8), (-0.95, -0.1),
+            (0.0, 0.8), (-0.4, 0.0), (0.01, 0.4)
         ]
-
-        # Pass 1: Global "Scout" (Prevents getting stuck at 0.00 correlation)
-        global_res = differential_evolution(
-            self.objective_function,
-            bounds,
-            popsize=5,  # Efficiency over brute force
-            tol=0.1
+        g_res = differential_evolution(
+            self.objective_function, bounds, popsize=3, tol=0.1
         )
-
-        # Pass 2: Local "Sniper" (Refines the result for high precision)
         res = minimize(
-            self.objective_function,
-            global_res.x,
-            bounds=bounds,
-            method='L-BFGS-B',
-            options={'ftol': 1e-6}  # Increase precision
+            self.objective_function, g_res.x, bounds=bounds,
+            method='L-BFGS-B', options={'ftol': 1e-4}
         )
         return res.x
