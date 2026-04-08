@@ -93,7 +93,7 @@ class BatesCalibrator:
         """Dual-pass calibration logic."""
         bounds = [
             (0.1, 4.0), (0.01, 0.3), (0.1, 0.8), (-0.95, -0.1),
-            (0.0, 0.8), (-0.4, 0.0), (0.01, 0.4)
+            (0.05, 0.8), (-0.4, -0.01), (0.01, 0.4)
         ]
         g_res = differential_evolution(
             self.objective_function, bounds, popsize=3, tol=0.1
