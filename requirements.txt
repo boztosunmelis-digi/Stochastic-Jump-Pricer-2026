@@ -1,7 +1,12 @@
-numpy
-python-dotenv
-pandas
-scipy
-streamlit
-plotly
-yfinance
+# Core Scientific Stack
+numpy==2.4.4
+pandas==3.0.2
+scipy==1.17.1
+
+# UI and Visualization
+streamlit==1.56.0
+plotly==6.6.0
+
+# Data and Utilities
+yfinance==1.2.1
+python-dotenv==1.2.2
