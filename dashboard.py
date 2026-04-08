@@ -22,7 +22,7 @@ def fetch_market_data(ticker, expiry):
         spot_price = float(tk.fast_info['lastPrice'])
 
         return calls_df, puts_df, spot_price
-    except (OSError, ValueError, KeyError, RuntimeError) as e:
+    except Exception as e:  # pylint: disable=broad-except
         st.warning(f"Data Fetch Warning: {e}. Using fallback spot.")
         return None, None, 550.0
 
@@ -107,9 +107,12 @@ with tab1:
 with tab2:
     st.subheader(f"Calibrating to {selected_ticker} Market Smile")
     if st.button(f"Calibrate {selected_ticker} Parameters"):
-        _, _, spot_now = fetch_market_data(selected_ticker, "2026-12-18")
         prev_spot = st.session_state.get('last_calibrated_spot')
         last_params = st.session_state.get('calibrated_params')
+        # Use a temporary calibrator to get the current spot price
+        # without making a separate yfinance call
+        _temp = BatesCalibrator(selected_ticker, "2026-12-18")
+        spot_now = _temp.spot
 
         if not needs_recalibration(spot_now, prev_spot):
             st.info("✅ Model Healthy: Using cached parameters.")

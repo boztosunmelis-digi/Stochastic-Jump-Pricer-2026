@@ -30,7 +30,7 @@ class BatesCalibrator:
             self.strikes = calls['strike'].values[start_idx:end_idx]
             self.market_prices = calls['lastPrice'].values[start_idx:end_idx]
             print(f"Bates Engine: {symbol} at ${self.spot:.2f}")
-        except (OSError, ValueError, KeyError):
+        except Exception:  # pylint: disable=broad-except
             self.spot = 550.0
             self.strikes = np.linspace(500, 600, 20)
             self.market_prices = np.linspace(60, 10, 20)
